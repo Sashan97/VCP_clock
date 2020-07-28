@@ -229,6 +229,9 @@ void loop(){
 }
 
 void autoTime(){
+  if(millis()%1000==0){
+    time.gettime();
+  }
   if (time.Hours>=bautostart && time.Hours<bautostop){
       updateTime();
   }
