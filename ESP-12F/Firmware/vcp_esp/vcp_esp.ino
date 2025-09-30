@@ -9,12 +9,13 @@
 #define HOUR_LED_AMOUNT 36
 #define MINUTE_LED_AMOUNT 72
 #define HOURS_PIN 5
-#define MINUTES_PIN 6
+#define MINUTES_PIN 4
 
 ESP8266WebServer server(80);
 
+const long utcOffsetInSeconds = 3 * 3600;
 WiFiUDP ntpUDP;
-NTPClient timeClient(ntpUDP, "pool.ntp.org", 0, 3600000);
+NTPClient timeClient(ntpUDP, "pool.ntp.org", utcOffsetInSeconds, 3600000);
 
 Ticker displayTicker;
 
@@ -43,6 +44,7 @@ void setMinutePixels(int minutes) {
   for (int i = 0; i < tileAmount; i++) {
     if (minutesUntilTile > 0) {
       minuteStrip.setPixelColor(i, color);
+      minutesUntilTile--;
     } 
     else {
       minuteStrip.setPixelColor(i, 0x000000);
@@ -81,6 +83,9 @@ void handleNotFound() {
 }
 
 void setup() {
+  pinMode(HOURS_PIN, OUTPUT);
+  pinMode(MINUTES_PIN, OUTPUT);
+
   Serial.begin(9600);
 
   wifiManager.autoConnect("VCP-Clock");
