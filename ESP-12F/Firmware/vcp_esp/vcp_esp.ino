@@ -5,15 +5,18 @@
 #include <Ticker.h>
 #include <NTPClient.h>
 #include <Adafruit_NeoPixel.h>
+#include <EEPROM.h>
 
 #define HOUR_LED_AMOUNT 36
 #define MINUTE_LED_AMOUNT 72
 #define HOURS_PIN 5
 #define MINUTES_PIN 4
 
+const int MAX_CONNECTION_ATTEMPTS = 3;
+const int WAIT_PER_ATTEMPT = 20;
+
 ESP8266WebServer server(80);
 
-long utcOffsetInSeconds = 3 * 3600;
 WiFiUDP ntpUDP;
 NTPClient timeClient(ntpUDP, "pool.ntp.org", 0, 3600000);
 
@@ -27,12 +30,18 @@ Adafruit_NeoPixel minuteStrip = Adafruit_NeoPixel(MINUTE_LED_AMOUNT, MINUTES_PIN
 int brightness = 50;
 uint32_t color = 0;
 
-bool autoOnOffEnabled = true;
 bool clockActive = true;
-int offHour = 23;
-int offMinute = 0;
-int onHour = 7;
-int onMinute = 0;
+
+struct ClockSettings {
+  long utcOffsetInSeconds;
+  bool autoOnOffEnabled;
+  int offHour;
+  int offMinute;
+  int onHour;
+  int onMinute;
+};
+
+ClockSettings settings;
 
 bool isInOnOffInterval(int curMin, int offMin, int onMin) {
   if (offMin == onMin) return false;
@@ -44,11 +53,30 @@ bool isInOnOffInterval(int curMin, int offMin, int onMin) {
   }
 }
 
+void saveSettings() {
+  EEPROM.put(0, settings);
+  EEPROM.commit();
+}
+
+void loadSettings() {
+  EEPROM.get(0, settings);
+
+  if (settings.utcOffsetInSeconds < -12 * 3600 || settings.utcOffsetInSeconds > 14 * 3600) {
+    settings.utcOffsetInSeconds = 3 * 3600;  // по умолчанию UTC+3
+    settings.autoOnOffEnabled = false;
+    settings.offHour = 23;
+    settings.offMinute = 0;
+    settings.onHour = 7;
+    settings.onMinute = 0;
+    saveSettings();
+  }
+}
+
 void setHourPixels(int hours) {
   hourStrip.clear();
   int hourLedIndex = hours * 3;
 
-  if (hours >= 12) 
+  if (hours >= 12)
     hourLedIndex -= 36;
 
   for (int i = hourLedIndex; i < (hourLedIndex + 3); i++) {
@@ -68,8 +96,7 @@ void setMinutePixels(int minutes) {
     if (minutesUntilTile > 0) {
       minuteStrip.setPixelColor(i, color);
       minutesUntilTile--;
-    } 
-    else {
+    } else {
       minuteStrip.setPixelColor(i, 0x000000);
       minutesUntilTile = 5;
     }
@@ -83,15 +110,14 @@ void DisplayTime() {
   int minutes = timeClient.getMinutes();
 
   int minutesSinceMidnight = hours * 60 + minutes;
-  int offMin = offHour * 60 + offMinute;
-  int onMin = onHour * 60 + onMinute;
+  int offMin = settings.offHour * 60 + settings.offMinute;
+  int onMin = settings.onHour * 60 + settings.onMinute;
 
   bool shouldBeActive = true;
-  if (autoOnOffEnabled) {
+  if (settings.autoOnOffEnabled) {
     if (isInOnOffInterval(minutesSinceMidnight, offMin, onMin)) {
       shouldBeActive = false;
-    }
-    else {
+    } else {
       shouldBeActive = true;
     }
   }
@@ -103,8 +129,7 @@ void DisplayTime() {
       minuteStrip.clear();
       hourStrip.show();
       minuteStrip.show();
-    }
-    else {
+    } else {
       setHourPixels(hours);
       hourStrip.show();
       setMinutePixels(minutes);
@@ -124,7 +149,7 @@ void DisplayTime() {
 }
 
 void handleRoot() {
-  int tzHours = utcOffsetInSeconds / 3600;
+  int tzHours = settings.utcOffsetInSeconds / 3600;
 
   uint32_t c = color;
   uint8_t r = (c >> 16) & 0xFF;
@@ -134,10 +159,10 @@ void handleRoot() {
   sprintf(colorHex, "#%02X%02X%02X", r, g, b);
 
   char offBuf[6], onBuf[6];
-  sprintf(offBuf, "%02d:%02d", offHour, offMinute);
-  sprintf(onBuf, "%02d:%02d", onHour, onMinute);
+  sprintf(offBuf, "%02d:%02d", settings.offHour, settings.offMinute);
+  sprintf(onBuf, "%02d:%02d", settings.onHour, settings.onMinute);
 
-  String checked = autoOnOffEnabled ? "checked" : "";
+  String checked = settings.autoOnOffEnabled ? "checked" : "";
 
   String page = String(R"rawliteral(
   <!DOCTYPE html>
@@ -171,7 +196,7 @@ void handleRoot() {
   page += String("<label>Brightness (0-255):<input type=\"number\" name=\"brightness\" value=\"") + String(brightness) + String("\" min=\"0\" max=\"255\"></label>\n");
 
   page += String("<label>LED color:<input type=\"color\" name=\"color\" value=\"") + String(colorHex) + String("\"></label>\n");
-  
+
   page += "<label><input type=\"checkbox\" name=\"auto_onoff\" " + checked + "> Enable automatic on/off</label>\n";
 
   page += String("<label>Auto-off start time:<input type=\"time\" name=\"off_time\" value=\"") + String(offBuf) + String("\"></label>\n");
@@ -191,8 +216,8 @@ void handleRoot() {
 void handleSave() {
   if (server.hasArg("tz")) {
     int tz = server.arg("tz").toInt();
-    utcOffsetInSeconds = tz * 3600;
-    timeClient.setTimeOffset(utcOffsetInSeconds);
+    settings.utcOffsetInSeconds = tz * 3600;
+    timeClient.setTimeOffset(settings.utcOffsetInSeconds);
   }
 
   if (server.hasArg("brightness")) {
@@ -206,7 +231,7 @@ void handleSave() {
   }
 
   if (server.hasArg("color")) {
-    String hex = server.arg("color"); // например, "#fca503"
+    String hex = server.arg("color");  // например, "#fca503"
     long number = strtol(hex.substring(1).c_str(), NULL, 16);
 
     int r = (number >> 16) & 0xFF;
@@ -217,26 +242,28 @@ void handleSave() {
   }
 
   if (server.hasArg("auto_onoff")) {
-    autoOnOffEnabled = true;
+    settings.autoOnOffEnabled = true;
   } else {
-    autoOnOffEnabled = false;
+    settings.autoOnOffEnabled = false;
   }
 
   if (server.hasArg("off_time")) {
     String offTime = server.arg("off_time");
     if (offTime.length() >= 5) {
-      offHour = offTime.substring(0,2).toInt();
-      offMinute = offTime.substring(3,2+3).toInt();
+      settings.offHour = offTime.substring(0, 2).toInt();
+      settings.offMinute = offTime.substring(3, 2 + 3).toInt();
     }
   }
 
   if (server.hasArg("on_time")) {
     String onTime = server.arg("on_time");
     if (onTime.length() >= 5) {
-      onHour = onTime.substring(0,2).toInt();
-      onMinute = onTime.substring(3,2+3).toInt();
+      settings.onHour = onTime.substring(0, 2).toInt();
+      settings.onMinute = onTime.substring(3, 2 + 3).toInt();
     }
   }
+
+  saveSettings();
 
   server.send(200, "text/html",
               "<h1>Settings saved!</h1><p><a href='/'>Back to settings</a></p>");
@@ -246,17 +273,53 @@ void handleNotFound() {
   server.send(404, "text/plain", "Not found");
 }
 
+void connectWiFiOrPortal() {
+  bool connected = false;
+
+  int pos = 0;
+  int dir = 1;
+  unsigned long lastAnim = 0;
+  const unsigned long animInterval = 500;
+
+  for (int attempt = 1; attempt <= MAX_CONNECTION_ATTEMPTS; attempt++) {
+    unsigned long start = millis();
+    while (WiFi.status() != WL_CONNECTED && (millis() - start) < (WAIT_PER_ATTEMPT * 1000)) {
+      delay(50);
+
+      if (millis() - lastAnim > animInterval) {
+        lastAnim = millis();
+
+        minuteStrip.clear();
+        if (pos < 5) {
+          minuteStrip.setPixelColor(pos, minuteStrip.Color(255, 0, 0));
+        }
+        minuteStrip.show();
+
+        pos += dir;
+        if (pos == 0 || pos == 4) dir = -dir;
+      }
+    }
+    if (WiFi.status() == WL_CONNECTED) {
+      connected = true;
+      break;
+    }
+  }
+
+  minuteStrip.clear();
+  minuteStrip.show();
+
+  if (!connected) {
+    wifiManager.startConfigPortal("VCP-Clock");
+  }
+}
+
 void setup() {
   pinMode(HOURS_PIN, OUTPUT);
   pinMode(MINUTES_PIN, OUTPUT);
 
   Serial.begin(9600);
-
-  wifiManager.autoConnect("VCP-Clock");
-  
-  timeClient.begin();
-  timeClient.setTimeOffset(utcOffsetInSeconds);
-  timeClient.update();
+  EEPROM.begin(512);
+  loadSettings();
 
   hourStrip.begin();
   minuteStrip.begin();
@@ -264,6 +327,15 @@ void setup() {
   hourStrip.setBrightness(brightness);
   minuteStrip.setBrightness(brightness);
   color = minuteStrip.Color(252, 165, 3);
+
+  WiFi.mode(WIFI_STA);
+  WiFi.begin();
+
+  connectWiFiOrPortal();
+
+  timeClient.begin();
+  timeClient.setTimeOffset(settings.utcOffsetInSeconds);
+  timeClient.update();
 
   displayTicker.attach(1, DisplayTime);
 
