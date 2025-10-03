@@ -34,7 +34,18 @@ int offMinute = 0;
 int onHour = 7;
 int onMinute = 0;
 
+bool isInOnOffInterval(int curMin, int offMin, int onMin) {
+  if (offMin == onMin) return false;
+  if (offMin < onMin) {
+    return (curMin >= offMin && curMin < onMin);
+  } else {
+    // for cases involving the transition through midnight
+    return (curMin >= offMin) || (curMin < onMin);
+  }
+}
+
 void setHourPixels(int hours) {
+  hourStrip.clear();
   int hourLedIndex = hours * 3;
 
   if (hours >= 12) 
@@ -46,6 +57,10 @@ void setHourPixels(int hours) {
 }
 
 void setMinutePixels(int minutes) {
+  if (minutes == 0) {
+    minuteStrip.clear();
+  }
+
   int minutesUntilTile = 5;
   int tileAmount = minutes + minutes / 5;
 
@@ -67,27 +82,64 @@ void DisplayTime() {
   int hours = timeClient.getHours();
   int minutes = timeClient.getMinutes();
 
+  int minutesSinceMidnight = hours * 60 + minutes;
+  int offMin = offHour * 60 + offMinute;
+  int onMin = onHour * 60 + onMinute;
+
+  bool shouldBeActive = true;
   if (autoOnOffEnabled) {
-    
+    if (isInOnOffInterval(minutesSinceMidnight, offMin, onMin)) {
+      shouldBeActive = false;
+    }
+    else {
+      shouldBeActive = true;
+    }
   }
 
+  if (shouldBeActive != clockActive) {
+    clockActive = shouldBeActive;
+    if (!clockActive) {
+      hourStrip.clear();
+      minuteStrip.clear();
+      hourStrip.show();
+      minuteStrip.show();
+    }
+    else {
+      setHourPixels(hours);
+      hourStrip.show();
+      setMinutePixels(minutes);
+      minuteStrip.show();
+    }
+  }
+
+  if (!clockActive) return;
+
   // Display hours
-  hourStrip.clear();
   setHourPixels(hours);
   hourStrip.show();
 
   // Display minutes
-  if (minutes == 0) {
-    minuteStrip.clear();
-  } 
-  else {
-    setMinutePixels(minutes);
-  }
+  setMinutePixels(minutes);
   minuteStrip.show();
 }
 
 void handleRoot() {
-  String page = R"rawliteral(
+  int tzHours = utcOffsetInSeconds / 3600;
+
+  uint32_t c = color;
+  uint8_t r = (c >> 16) & 0xFF;
+  uint8_t g = (c >> 8) & 0xFF;
+  uint8_t b = c & 0xFF;
+  char colorHex[8];
+  sprintf(colorHex, "#%02X%02X%02X", r, g, b);
+
+  char offBuf[6], onBuf[6];
+  sprintf(offBuf, "%02d:%02d", offHour, offMinute);
+  sprintf(onBuf, "%02d:%02d", onHour, onMinute);
+
+  String checked = autoOnOffEnabled ? "checked" : "";
+
+  String page = String(R"rawliteral(
   <!DOCTYPE html>
   <html>
   <head>
@@ -96,44 +148,37 @@ void handleRoot() {
     <style>
       body { font-family: Arial, sans-serif; margin: 20px; background: #f5f5f5; }
       h1 { color: #222; }
-      form { background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 0 5px rgba(0,0,0,0.2); max-width: 400px; }
-      label { display: block; margin-top: 15px; }
+      form { background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 0 5px rgba(0,0,0,0.2); max-width: 420px; }
+      label { display: block; margin-top: 12px; }
       input[type=number], input[type=color], input[type=time] {
-        padding: 5px; width: 100%; box-sizing: border-box; margin-top: 5px;
+        padding: 6px; width: 100%; box-sizing: border-box; margin-top: 6px;
       }
       input[type=submit] {
-        margin-top: 20px; padding: 10px 20px;
+        margin-top: 18px; padding: 10px 18px;
         background: #4CAF50; color: white; border: none;
         border-radius: 4px; cursor: pointer;
       }
-      input[type=submit]:hover {
-        background: #45a049;
-      }
+      input[type=submit]:hover { background: #45a049; }
     </style>
   </head>
   <body>
     <h1>Clock Settings</h1>
     <form action="/save" method="POST">
-      <label>Timezone offset (hours):
-        <input type="number" name="tz" value="3" step="1" min="-12" max="12">
-      </label>
+  )rawliteral");
 
-      <label>Brightness (0-255):
-        <input type="number" name="brightness" value="128" min="0" max="255">
-      </label>
+  page += String("<label>Timezone offset (hours):<input type=\"number\" name=\"tz\" value=\"") + String(tzHours) + String("\" step=\"1\" min=\"-12\" max=\"12\"></label>\n");
 
-      <label>LED color:
-        <input type="color" name="color" value="#fca503">
-      </label>
+  page += String("<label>Brightness (0-255):<input type=\"number\" name=\"brightness\" value=\"") + String(brightness) + String("\" min=\"0\" max=\"255\"></label>\n");
 
-      <label>Auto-off start time:
-        <input type="time" name="off_time" value="23:00">
-      </label>
+  page += String("<label>LED color:<input type=\"color\" name=\"color\" value=\"") + String(colorHex) + String("\"></label>\n");
+  
+  page += "<label><input type=\"checkbox\" name=\"auto_onoff\" " + checked + "> Enable automatic on/off</label>\n";
 
-      <label>Auto-on start time:
-        <input type="time" name="on_time" value="07:00">
-      </label>
+  page += String("<label>Auto-off start time:<input type=\"time\" name=\"off_time\" value=\"") + String(offBuf) + String("\"></label>\n");
 
+  page += String("<label>Auto-on start time:<input type=\"time\" name=\"on_time\" value=\"") + String(onBuf) + String("\"></label>\n");
+
+  page += R"rawliteral(
       <input type="submit" value="Save settings">
     </form>
   </body>
@@ -144,8 +189,6 @@ void handleRoot() {
 }
 
 void handleSave() {
-  Serial.println("=== Received settings ===");
-
   if (server.hasArg("tz")) {
     int tz = server.arg("tz").toInt();
     utcOffsetInSeconds = tz * 3600;
@@ -153,9 +196,10 @@ void handleSave() {
   }
 
   if (server.hasArg("brightness")) {
-    int brightness = server.arg("brightness").toInt();
-    if (brightness < 0) brightness = 0;
-    if (brightness > 255) brightness = 255;
+    int b = server.arg("brightness").toInt();
+    if (b < 0) b = 0;
+    if (b > 255) b = 255;
+    brightness = b;
 
     hourStrip.setBrightness(brightness);
     minuteStrip.setBrightness(brightness);
@@ -172,23 +216,27 @@ void handleSave() {
     color = minuteStrip.Color(r, g, b);
   }
 
+  if (server.hasArg("auto_onoff")) {
+    autoOnOffEnabled = true;
+  } else {
+    autoOnOffEnabled = false;
+  }
+
   if (server.hasArg("off_time")) {
     String offTime = server.arg("off_time");
-    offHour = offTime.substring(0,2).toInt();
-    offMinute = offTime.substring(3).toInt();
-
-    Serial.printf("Auto-off: %02d:%02d\n", offHour, offMinute);
+    if (offTime.length() >= 5) {
+      offHour = offTime.substring(0,2).toInt();
+      offMinute = offTime.substring(3,2+3).toInt();
+    }
   }
 
   if (server.hasArg("on_time")) {
     String onTime = server.arg("on_time");
-    onHour = onTime.substring(0,2).toInt();
-    onMinute = onTime.substring(3).toInt();
-
-    Serial.printf("Auto-on: %02d:%02d\n", onHour, onMinute);
+    if (onTime.length() >= 5) {
+      onHour = onTime.substring(0,2).toInt();
+      onMinute = onTime.substring(3,2+3).toInt();
+    }
   }
-
-  Serial.println("=========================");
 
   server.send(200, "text/html",
               "<h1>Settings saved!</h1><p><a href='/'>Back to settings</a></p>");
