@@ -32,6 +32,7 @@ bool clockActive = true;
 struct ClockSettings {
   long utcOffsetInSeconds;
   bool autoOnOffEnabled;
+  bool dstEnabled;
   int offHour;
   int offMinute;
   int onHour;
@@ -63,6 +64,7 @@ void loadSettings() {
   if (settings.utcOffsetInSeconds < -12 * 3600 || settings.utcOffsetInSeconds > 14 * 3600) {
     settings.utcOffsetInSeconds = 3 * 3600;
     settings.autoOnOffEnabled = false;
+    settings.dstEnabled = true;
     settings.offHour = 23;
     settings.offMinute = 0;
     settings.onHour = 7;
@@ -71,6 +73,28 @@ void loadSettings() {
     settings.waitPerAttempt = 30;
     saveSettings();
   }
+}
+
+bool isDST(int year, int month, int day, int hour) {
+  int lastSundayMarch = 31 - ((5 * year / 4 + 4) % 7);
+  int lastSundayOctober = 31 - ((5 * year / 4 + 1) % 7);
+
+  if ((month > 3 && month < 10) ||
+      (month == 3 && (day > lastSundayMarch || (day == lastSundayMarch && hour >= 2))) ||
+      (month == 10 && (day < lastSundayOctober || (day == lastSundayOctober && hour < 3)))) {
+    return true;
+  }
+  return false;
+}
+
+void updateTimeOffset() {
+  time_t rawTime = timeClient.getEpochTime();
+  struct tm *timeInfo = gmtime(&rawTime);
+
+  bool dst = isDST(1900 + timeInfo->tm_year, timeInfo->tm_mon + 1, timeInfo->tm_mday, timeInfo->tm_hour);
+
+  long effectiveOffset = settings.utcOffsetInSeconds + (dst ? 3600L : 0);
+  timeClient.setTimeOffset(effectiveOffset);
 }
 
 void setHourPixels(int hours) {
@@ -163,7 +187,8 @@ void handleRoot() {
   sprintf(offBuf, "%02d:%02d", settings.offHour, settings.offMinute);
   sprintf(onBuf, "%02d:%02d", settings.onHour, settings.onMinute);
 
-  String checked = settings.autoOnOffEnabled ? "checked" : "";
+  String autoOnOffChecked = settings.autoOnOffEnabled ? "checked" : "";
+  String dstChecked = settings.dstEnabled ? "checked" : "";
 
   String page = String(R"rawliteral(
   <!DOCTYPE html>
@@ -194,11 +219,13 @@ void handleRoot() {
 
   page += String("<label>Timezone offset (hours):<input type=\"number\" name=\"tz\" value=\"") + String(tzHours) + String("\" step=\"1\" min=\"-12\" max=\"12\"></label>\n");
 
+  page += "<label><input type=\"checkbox\" name=\"auto_dst\" " + dstChecked + "> Perform DST trasition</label>\n";
+
   page += String("<label>Brightness (0-255):<input type=\"number\" name=\"brightness\" value=\"") + String(brightness) + String("\" min=\"0\" max=\"255\"></label>\n");
 
   page += String("<label>LED color:<input type=\"color\" name=\"color\" value=\"") + String(colorHex) + String("\"></label>\n");
 
-  page += "<label><input type=\"checkbox\" name=\"auto_onoff\" " + checked + "> Enable automatic on/off</label>\n";
+  page += "<label><input type=\"checkbox\" name=\"auto_onoff\" " + autoOnOffChecked + "> Enable automatic on/off</label>\n";
 
   page += String("<label>Auto-off start time:<input type=\"time\" name=\"off_time\" value=\"") + String(offBuf) + String("\"></label>\n");
 
@@ -223,6 +250,12 @@ void handleSave() {
     int tz = server.arg("tz").toInt();
     settings.utcOffsetInSeconds = tz * 3600;
     timeClient.setTimeOffset(settings.utcOffsetInSeconds);
+  }
+
+  if (server.hasArg("auto_dst")) {
+    settings.dstEnabled = true;
+  } else {
+    settings.dstEnabled = false;
   }
 
   if (server.hasArg("brightness")) {
@@ -365,7 +398,14 @@ void setup() {
 }
 
 void loop() {
-  // put your main code here, to run repeatedly:
   server.handleClient();
-  timeClient.update();
+
+  if (timeClient.update()) {
+    if (settings.dstEnabled) {
+      updateTimeOffset();
+    }
+    else {
+      timeClient.setTimeOffset(settings.utcOffsetInSeconds);
+    }
+  }
 }
