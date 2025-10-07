@@ -12,9 +12,6 @@
 #define HOURS_PIN 5
 #define MINUTES_PIN 4
 
-const int MAX_CONNECTION_ATTEMPTS = 3;
-const int WAIT_PER_ATTEMPT = 20;
-
 ESP8266WebServer server(80);
 
 WiFiUDP ntpUDP;
@@ -39,6 +36,8 @@ struct ClockSettings {
   int offMinute;
   int onHour;
   int onMinute;
+  int maxConnectionAttempts;
+  int waitPerAttempt;
 };
 
 ClockSettings settings;
@@ -62,12 +61,14 @@ void loadSettings() {
   EEPROM.get(0, settings);
 
   if (settings.utcOffsetInSeconds < -12 * 3600 || settings.utcOffsetInSeconds > 14 * 3600) {
-    settings.utcOffsetInSeconds = 3 * 3600;  // по умолчанию UTC+3
+    settings.utcOffsetInSeconds = 3 * 3600;
     settings.autoOnOffEnabled = false;
     settings.offHour = 23;
     settings.offMinute = 0;
     settings.onHour = 7;
     settings.onMinute = 0;
+    settings.maxConnectionAttempts = 3;
+    settings.waitPerAttempt = 30;
     saveSettings();
   }
 }
@@ -203,6 +204,10 @@ void handleRoot() {
 
   page += String("<label>Auto-on start time:<input type=\"time\" name=\"on_time\" value=\"") + String(onBuf) + String("\"></label>\n");
 
+  page += String("<label>Wi-Fi connection attempts (0-10):<input type=\"number\" name=\"max_attempts\" value=\"") + String(settings.maxConnectionAttempts) + String("\" min=\"0\" max=\"10\"></label>\n");
+
+  page += String("<label>Wait per attempt, s (0-100):<input type=\"number\" name=\"wait_per_attempt\" value=\"") + String(settings.waitPerAttempt) + String("\" min=\"0\" max=\"10\"></label>\n");
+  
   page += R"rawliteral(
       <input type="submit" value="Save settings">
     </form>
@@ -263,6 +268,20 @@ void handleSave() {
     }
   }
 
+  if (server.hasArg("max_attempts")) {
+    int attempts = server.arg("max_attempts").toInt();
+    if (attempts < 0) attempts = 0;
+    if (attempts > 10) attempts = 10;
+    settings.maxConnectionAttempts = attempts;
+  }
+
+  if (server.hasArg("wait_per_attempt")) {
+    int delay = server.arg("wait_per_attempt").toInt();
+    if (delay < 0) delay = 0;
+    if (delay > 100) delay = 100;
+    settings.waitPerAttempt = delay;
+  }
+
   saveSettings();
 
   server.send(200, "text/html",
@@ -281,9 +300,9 @@ void connectWiFiOrPortal() {
   unsigned long lastAnim = 0;
   const unsigned long animInterval = 500;
 
-  for (int attempt = 1; attempt <= MAX_CONNECTION_ATTEMPTS; attempt++) {
+  for (int attempt = 1; attempt <= settings.maxConnectionAttempts; attempt++) {
     unsigned long start = millis();
-    while (WiFi.status() != WL_CONNECTED && (millis() - start) < (WAIT_PER_ATTEMPT * 1000)) {
+    while (WiFi.status() != WL_CONNECTED && (millis() - start) < (settings.waitPerAttempt * 1000)) {
       delay(50);
 
       if (millis() - lastAnim > animInterval) {
