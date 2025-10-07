@@ -242,6 +242,13 @@ void handleRoot() {
   </html>
   )rawliteral";
 
+  page += R"rawliteral(
+  <hr>
+  <form action="/forget" method="POST">
+    <input type="submit" value="Forget Wi-Fi and reboot">
+  </form>
+  )rawliteral";
+
   server.send(200, "text/html", page);
 }
 
@@ -365,6 +372,16 @@ void connectWiFiOrPortal() {
   }
 }
 
+void handleForgetWiFi() {
+  server.send(200, "text/html",
+              "<h1>Forgetting Wi-Fi...</h1><p>Device will reboot.</p>");
+
+  WiFi.disconnect(true);
+
+  delay(500);
+  ESP.restart();
+}
+
 void setup() {
   pinMode(HOURS_PIN, OUTPUT);
   pinMode(MINUTES_PIN, OUTPUT);
@@ -393,6 +410,7 @@ void setup() {
 
   server.on("/", handleRoot);
   server.on("/save", HTTP_POST, handleSave);
+  server.on("/forget", HTTP_POST, handleForgetWiFi);
   server.onNotFound(handleNotFound);
   server.begin();
 }
