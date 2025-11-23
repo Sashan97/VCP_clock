@@ -233,7 +233,7 @@ void handleRoot() {
 
   page += String("<label>Wi-Fi connection attempts (0-10):<input type=\"number\" name=\"max_attempts\" value=\"") + String(settings.maxConnectionAttempts) + String("\" min=\"0\" max=\"10\"></label>\n");
 
-  page += String("<label>Wait per attempt, s (0-100):<input type=\"number\" name=\"wait_per_attempt\" value=\"") + String(settings.waitPerAttempt) + String("\" min=\"0\" max=\"10\"></label>\n");
+  page += String("<label>Wait per attempt, s (0-100):<input type=\"number\" name=\"wait_per_attempt\" value=\"") + String(settings.waitPerAttempt) + String("\" min=\"0\" max=\"100\"></label>\n");
   
   page += R"rawliteral(
       <input type="submit" value="Save settings">
