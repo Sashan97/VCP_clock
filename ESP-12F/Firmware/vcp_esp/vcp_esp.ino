@@ -38,6 +38,8 @@ uint32_t color = 0;
 bool clockActive = true;
 
 struct ClockSettings {
+  uint32_t magic;
+
   long utcOffsetInSeconds;
   bool autoOnOffEnabled;
   bool dstEnabled;
@@ -49,7 +51,15 @@ struct ClockSettings {
   int waitPerAttempt;
 };
 
+const uint32_t SETTINGS_MAGIC = 0x434C4B31; // "CLK1"
+
 ClockSettings settings;
+
+volatile bool displayUpdateRequested = false;
+
+void requestDisplayUpdate() {
+  displayUpdateRequested = true;
+}
 
 bool isInOnOffInterval(int curMin, int offMin, int onMin) {
   if (offMin == onMin) return false;
@@ -69,7 +79,7 @@ void saveSettings() {
 void loadSettings() {
   EEPROM.get(0, settings);
 
-  if (settings.utcOffsetInSeconds < -12 * 3600 || settings.utcOffsetInSeconds > 14 * 3600) {
+  if (settings.magic != SETTINGS_MAGIC) {
     settings.utcOffsetInSeconds = DEFAULT_OFFSET * 3600;
     settings.autoOnOffEnabled = false;
     settings.dstEnabled = true;
@@ -165,7 +175,7 @@ void setMinutePixels(int minutes) {
   }
 }
 
-void DisplayTime() {
+void displayTime() {
   Serial.println(timeClient.getFormattedTime());
 
   int hours = timeClient.getHours();
@@ -371,6 +381,14 @@ void handleNotFound() {
 }
 
 void connectWiFiOrPortal() {
+  if (!wifiManager.getWiFiIsSaved()) {
+    Serial.println("No saved Wi-Fi credentials. Starting ConfigPortal...");
+    wifiManager.startConfigPortal("VCP-Clock");
+    return;
+  }
+  
+  WiFi.begin();
+
   bool connected = false;
 
   int pos = 0;
@@ -413,8 +431,10 @@ void connectWiFiOrPortal() {
 void handleForgetWiFi() {
   server.send(200, "text/html",
               "<h1>Forgetting Wi-Fi...</h1><p>Device will reboot.</p>");
+  
+  delay(200);
 
-  WiFi.disconnect(true);
+  wifiManager.resetSettings();
 
   delay(500);
   ESP.restart();
@@ -436,8 +456,6 @@ void setup() {
   color = minuteStrip.Color(252, 165, 3);
 
   WiFi.mode(WIFI_STA);
-  WiFi.begin();
-
   connectWiFiOrPortal();
 
   timeClient.begin();
@@ -447,7 +465,7 @@ void setup() {
     updateTimeOffset();
   }
 
-  displayTicker.attach(1, DisplayTime);
+  displayTicker.attach(1, requestDisplayUpdate);
 
   server.on("/", handleRoot);
   server.on("/save", HTTP_POST, handleSave);
@@ -458,6 +476,11 @@ void setup() {
 
 void loop() {
   server.handleClient();
+
+  if (displayUpdateRequested) {
+    displayUpdateRequested = false;
+    displayTime();
+  }
 
   if (timeClient.update()) {
     updateTimeOffset();
