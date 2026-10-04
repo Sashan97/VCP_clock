@@ -57,6 +57,16 @@ ClockSettings settings;
 
 volatile bool displayUpdateRequested = false;
 
+bool clockServerStarted = false;
+
+bool portalAnimationPixels[MINUTE_LED_AMOUNT] = { false };
+uint8_t portalAnimationPixelCount = 0;
+
+unsigned long lastPortalAnimationUpdate = 0;
+
+const unsigned long PORTAL_ANIMATION_INTERVAL = 3000UL;
+const uint8_t PORTAL_ANIMATION_MAX_PIXELS = 10;
+
 void requestDisplayUpdate() {
   displayUpdateRequested = true;
 }
@@ -220,6 +230,82 @@ void displayTime() {
   minuteStrip.show();
 }
 
+bool isMinuteSeparatorPixel(int pixel) {
+  // Minute strip is arranged as:
+  // 5 minute LEDs, 1 separator, repeated.
+  return (pixel % 6) == 5;
+}
+
+
+void resetConfigPortalAnimation() {
+  for (int i = 0; i < MINUTE_LED_AMOUNT; i++) {
+    portalAnimationPixels[i] = false;
+  }
+
+  portalAnimationPixelCount = 0;
+
+  // Make the first pixel appear immediately.
+  lastPortalAnimationUpdate = millis() - PORTAL_ANIMATION_INTERVAL;
+
+  // Remove the old clock display when entering ConfigPortal.
+  hourStrip.clear();
+  minuteStrip.clear();
+
+  hourStrip.show();
+  minuteStrip.show();
+}
+
+void updateConfigPortalAnimation() {
+  unsigned long now = millis();
+
+  if (now - lastPortalAnimationUpdate < PORTAL_ANIMATION_INTERVAL) {
+    return;
+  }
+
+  lastPortalAnimationUpdate = now;
+
+  // Pick a new, currently inactive, non-separator pixel.
+  int newPixel;
+
+  do {
+    newPixel = random(MINUTE_LED_AMOUNT);
+  }
+  while (
+    isMinuteSeparatorPixel(newPixel) ||
+    portalAnimationPixels[newPixel]
+  );
+
+  portalAnimationPixels[newPixel] = true;
+  portalAnimationPixelCount++;
+
+  if (portalAnimationPixelCount > PORTAL_ANIMATION_MAX_PIXELS) {
+    int pixelToRemove;
+
+    do {
+      pixelToRemove = random(MINUTE_LED_AMOUNT);
+    }
+    while (
+      isMinuteSeparatorPixel(pixelToRemove) ||
+      !portalAnimationPixels[pixelToRemove] ||
+      pixelToRemove == newPixel
+    );
+
+    portalAnimationPixels[pixelToRemove] = false;
+    portalAnimationPixelCount--;
+  }
+
+  // Render complete animation state.
+  minuteStrip.clear();
+
+  for (int i = 0; i < MINUTE_LED_AMOUNT; i++) {
+    if (portalAnimationPixels[i]) {
+      minuteStrip.setPixelColor(i, color);
+    }
+  }
+
+  minuteStrip.show();
+}
+
 void handleRoot() {
   int tzHours = settings.utcOffsetInSeconds / 3600;
 
@@ -380,12 +466,31 @@ void handleNotFound() {
   server.send(404, "text/plain", "Not found");
 }
 
-void connectWiFiOrPortal() {
-  if (!wifiManager.getWiFiIsSaved()) {
-    Serial.println("No saved Wi-Fi credentials. Starting ConfigPortal...");
-    wifiManager.startConfigPortal("VCP-Clock");
+void startClockConfigPortal() {
+  Serial.println("Starting ConfigPortal...");
+
+  resetConfigPortalAnimation();
+
+  wifiManager.startConfigPortal("VCP-Clock");
+}
+
+void startClockServer() {
+  if (clockServerStarted) {
     return;
   }
+
+  server.begin();
+  clockServerStarted = true;
+
+  Serial.println("Clock web server started.");
+}
+
+void connectWiFiOrPortal() {
+  if (!wifiManager.getWiFiIsSaved()) {
+  Serial.println("No saved Wi-Fi credentials.");
+  startClockConfigPortal();
+  return;
+}
   
   WiFi.begin();
 
@@ -424,7 +529,7 @@ void connectWiFiOrPortal() {
   minuteStrip.show();
 
   if (!connected) {
-    wifiManager.startConfigPortal("VCP-Clock");
+    startClockConfigPortal();
   }
 }
 
@@ -456,6 +561,11 @@ void setup() {
   color = minuteStrip.Color(252, 165, 3);
 
   WiFi.mode(WIFI_STA);
+  wifiManager.setConfigPortalBlocking(false);
+  wifiManager.setDisableConfigPortal(true);
+
+  randomSeed(micros());
+
   connectWiFiOrPortal();
 
   timeClient.begin();
@@ -471,20 +581,66 @@ void setup() {
   server.on("/save", HTTP_POST, handleSave);
   server.on("/forget", HTTP_POST, handleForgetWiFi);
   server.onNotFound(handleNotFound);
-  server.begin();
+  if (!wifiManager.getConfigPortalActive()) {
+    startClockServer();
+  }
 }
 
 void loop() {
-  server.handleClient();
+  // ------------------------------------------------------------
+  // CONFIG PORTAL MODE
+  // ------------------------------------------------------------
+  if (wifiManager.getConfigPortalActive()) {
+
+    bool connected = wifiManager.process();
+
+    displayUpdateRequested = false;
+
+    if (connected && WiFi.status() == WL_CONNECTED) {
+      Serial.println("Wi-Fi configured successfully.");
+
+      startClockServer();
+
+      if (timeClient.forceUpdate()) {
+        updateTimeOffset();
+      }
+
+      minuteStrip.clear();
+      minuteStrip.show();
+
+      displayTime();
+
+      return;
+    }
+
+    updateConfigPortalAnimation();
+
+    return;
+  }
+
+
+  // ------------------------------------------------------------
+  // NORMAL CLOCK MODE
+  // ------------------------------------------------------------
+  if (!clockServerStarted && WiFi.status() == WL_CONNECTED) {
+    startClockServer();
+  }
+
+  if (clockServerStarted) {
+    server.handleClient();
+  }
+
 
   if (displayUpdateRequested) {
     displayUpdateRequested = false;
     displayTime();
   }
 
+
   if (timeClient.update()) {
     updateTimeOffset();
   }
+
 
   static unsigned long lastDstCheck = 0;
 
