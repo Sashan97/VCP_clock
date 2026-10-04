@@ -12,6 +12,14 @@
 #define HOURS_PIN 5
 #define MINUTES_PIN 4
 
+#define DEFAULT_OFFSET 2
+#define DEFAULT_ON_HOUR 7
+#define DEFAULT_ON_MINUTE 0
+#define DEFAULT_OFF_HOUR 23
+#define DEFAULT_OFF_MINUTE 0
+#define DEFAULT_MAX_CONNECTION_ATTEMPTS 3
+#define DEFAULT_WAIT_PER_ATTEMPT 30
+
 ESP8266WebServer server(80);
 
 WiFiUDP ntpUDP;
@@ -62,38 +70,67 @@ void loadSettings() {
   EEPROM.get(0, settings);
 
   if (settings.utcOffsetInSeconds < -12 * 3600 || settings.utcOffsetInSeconds > 14 * 3600) {
-    settings.utcOffsetInSeconds = 3 * 3600;
+    settings.utcOffsetInSeconds = DEFAULT_OFFSET * 3600;
     settings.autoOnOffEnabled = false;
     settings.dstEnabled = true;
-    settings.offHour = 23;
-    settings.offMinute = 0;
-    settings.onHour = 7;
-    settings.onMinute = 0;
-    settings.maxConnectionAttempts = 3;
-    settings.waitPerAttempt = 30;
+    settings.offHour = DEFAULT_OFF_HOUR;
+    settings.offMinute = DEFAULT_OFF_MINUTE;
+    settings.onHour = DEFAULT_ON_HOUR;
+    settings.onMinute = DEFAULT_ON_MINUTE;
+    settings.maxConnectionAttempts = DEFAULT_MAX_CONNECTION_ATTEMPTS;
+    settings.waitPerAttempt = DEFAULT_WAIT_PER_ATTEMPT;
     saveSettings();
   }
 }
 
-bool isDST(int year, int month, int day, int hour) {
+bool isDST(int year, int month, int day, int hourUTC) {
   int lastSundayMarch = 31 - ((5 * year / 4 + 4) % 7);
   int lastSundayOctober = 31 - ((5 * year / 4 + 1) % 7);
 
-  if ((month > 3 && month < 10) ||
-      (month == 3 && (day > lastSundayMarch || (day == lastSundayMarch && hour >= 2))) ||
-      (month == 10 && (day < lastSundayOctober || (day == lastSundayOctober && hour < 3)))) {
+  if (month > 3 && month < 10) {
     return true;
   }
+
+  if (month == 3) {
+    if (day > lastSundayMarch) return true;
+    if (day < lastSundayMarch) return false;
+
+    return hourUTC >= 1;
+  }
+
+  if (month == 10) {
+    if (day < lastSundayOctober) return true;
+    if (day > lastSundayOctober) return false;
+
+    return hourUTC < 1;
+  }
+
   return false;
 }
 
 void updateTimeOffset() {
-  time_t rawTime = timeClient.getEpochTime();
-  struct tm *timeInfo = gmtime(&rawTime);
+  timeClient.setTimeOffset(0);
 
-  bool dst = isDST(1900 + timeInfo->tm_year, timeInfo->tm_mon + 1, timeInfo->tm_mday, timeInfo->tm_hour);
+  time_t utcTime = timeClient.getEpochTime();
+  struct tm *utcInfo = gmtime(&utcTime);
 
-  long effectiveOffset = settings.utcOffsetInSeconds + (dst ? 3600L : 0);
+  bool dst = false;
+
+  if (settings.dstEnabled) {
+    dst = isDST(
+      utcInfo->tm_year + 1900,
+      utcInfo->tm_mon + 1,
+      utcInfo->tm_mday,
+      utcInfo->tm_hour
+    );
+  }
+
+  long effectiveOffset = settings.utcOffsetInSeconds;
+
+  if (dst) {
+    effectiveOffset += 3600L;
+  }
+
   timeClient.setTimeOffset(effectiveOffset);
 }
 
@@ -256,7 +293,6 @@ void handleSave() {
   if (server.hasArg("tz")) {
     int tz = server.arg("tz").toInt();
     settings.utcOffsetInSeconds = tz * 3600;
-    timeClient.setTimeOffset(settings.utcOffsetInSeconds);
   }
 
   if (server.hasArg("auto_dst")) {
@@ -323,6 +359,8 @@ void handleSave() {
   }
 
   saveSettings();
+
+  updateTimeOffset();
 
   server.send(200, "text/html",
               "<h1>Settings saved!</h1><p><a href='/'>Back to settings</a></p>");
@@ -403,8 +441,11 @@ void setup() {
   connectWiFiOrPortal();
 
   timeClient.begin();
-  timeClient.setTimeOffset(settings.utcOffsetInSeconds);
-  timeClient.update();
+  timeClient.setTimeOffset(0);
+
+  if (timeClient.update()) {
+    updateTimeOffset();
+  }
 
   displayTicker.attach(1, DisplayTime);
 
@@ -419,11 +460,13 @@ void loop() {
   server.handleClient();
 
   if (timeClient.update()) {
-    if (settings.dstEnabled) {
-      updateTimeOffset();
-    }
-    else {
-      timeClient.setTimeOffset(settings.utcOffsetInSeconds);
-    }
+    updateTimeOffset();
+  }
+
+  static unsigned long lastDstCheck = 0;
+
+  if (millis() - lastDstCheck >= 60000UL) {
+    lastDstCheck = millis();
+    updateTimeOffset();
   }
 }
