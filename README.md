@@ -1,8 +1,12 @@
 # VCP Clock
 
-Replica of the electronic clock installed in the former Vilnius Central Post building operations hall.
+Replica of the iconic electric clock inside the former Vilnius Central Post Office, incorporated into the wall of its main operations hall.
 
-The clock uses individually addressable LEDs to reproduce the original hour and minute display and is controlled by an ESP8266-based ESP-12F module.
+The original clock was created by Lithuanian designer Feliksas Daukantas (1915–1995) as part of the visual system he designed for the Central Post Office during its 1969 reconstruction. Daukantas was one of the pioneers of professional design and design education in Lithuania.
+
+This replica uses individually addressable LEDs to reproduce the original hour and minute display and is controlled by an ESP8266-based ESP-12F module.
+
+![VCP Clock](Images/clock.jpg)
 
 ## Hardware
 
