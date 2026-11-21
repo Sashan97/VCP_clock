@@ -169,9 +169,7 @@ void setHourPixels(int hours) {
 }
 
 void setMinutePixels(int minutes) {
-  if (minutes == 0) {
-    minuteStrip.clear();
-  }
+  minuteStrip.clear();
 
   int minutesUntilTile = 5;
   int tileAmount = minutes + minutes / 5;
@@ -315,6 +313,7 @@ void handleRoot() {
   uint8_t r = (c >> 16) & 0xFF;
   uint8_t g = (c >> 8) & 0xFF;
   uint8_t b = c & 0xFF;
+
   char colorHex[8];
   sprintf(colorHex, "#%02X%02X%02X", r, g, b);
 
@@ -325,6 +324,8 @@ void handleRoot() {
   String autoOnOffChecked = settings.autoOnOffEnabled ? "checked" : "";
   String dstChecked = settings.dstEnabled ? "checked" : "";
 
+  unsigned long uptimeSeconds = millis() / 1000UL;
+
   String page = String(R"rawliteral(
   <!DOCTYPE html>
   <html>
@@ -332,57 +333,152 @@ void handleRoot() {
     <meta charset="UTF-8">
     <title>Clock Settings</title>
     <style>
-      body { font-family: Arial, sans-serif; margin: 20px; background: #f5f5f5; }
-      h1 { color: #222; }
-      form { background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 0 5px rgba(0,0,0,0.2); max-width: 420px; }
-      label { display: block; margin-top: 12px; }
-      input[type=number], input[type=color], input[type=time] {
-        padding: 6px; width: 100%; box-sizing: border-box; margin-top: 6px;
+      body {
+        font-family: Arial, sans-serif;
+        margin: 20px;
+        background: #f5f5f5;
       }
+
+      h1 {
+        color: #222;
+      }
+
+      form {
+        background: #fff;
+        padding: 20px;
+        border-radius: 8px;
+        box-shadow: 0 0 5px rgba(0,0,0,0.2);
+        max-width: 420px;
+      }
+
+      label {
+        display: block;
+        margin-top: 12px;
+      }
+
+      input[type=number],
+      input[type=color],
+      input[type=time] {
+        padding: 6px;
+        width: 100%;
+        box-sizing: border-box;
+        margin-top: 6px;
+      }
+
       input[type=submit] {
-        margin-top: 18px; padding: 10px 18px;
-        background: #4CAF50; color: white; border: none;
-        border-radius: 4px; cursor: pointer;
+        margin-top: 18px;
+        padding: 10px 18px;
+        background: #4CAF50;
+        color: white;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
       }
-      input[type=submit]:hover { background: #45a049; }
+
+      input[type=submit]:hover {
+        background: #45a049;
+      }
     </style>
   </head>
+
   <body>
     <h1>Clock Settings</h1>
+
     <form action="/save" method="POST">
   )rawliteral");
 
-  page += String("<label>Timezone offset (hours):<input type=\"number\" name=\"tz\" value=\"") + String(tzHours) + String("\" step=\"1\" min=\"-12\" max=\"12\"></label>\n");
+  page += String(
+    "<label>Timezone offset (hours):"
+    "<input type=\"number\" name=\"tz\" value=\""
+  ) + String(tzHours) +
+    "\" step=\"1\" min=\"-12\" max=\"12\"></label>\n";
 
-  page += "<label><input type=\"checkbox\" name=\"auto_dst\" " + dstChecked + "> Perform DST trasition</label>\n";
+  page +=
+    "<label>"
+    "<input type=\"checkbox\" name=\"auto_dst\" " +
+    dstChecked +
+    "> Perform DST transition"
+    "</label>\n";
 
-  page += String("<label>Brightness (0-255):<input type=\"number\" name=\"brightness\" value=\"") + String(brightness) + String("\" min=\"0\" max=\"255\"></label>\n");
+  page += String(
+    "<label>Brightness (0-255):"
+    "<input type=\"number\" name=\"brightness\" value=\""
+  ) + String(brightness) +
+    "\" min=\"0\" max=\"255\"></label>\n";
 
-  page += String("<label>LED color:<input type=\"color\" name=\"color\" value=\"") + String(colorHex) + String("\"></label>\n");
+  page += String(
+    "<label>LED color:"
+    "<input type=\"color\" name=\"color\" value=\""
+  ) + String(colorHex) +
+    "\"></label>\n";
 
-  page += "<label><input type=\"checkbox\" name=\"auto_onoff\" " + autoOnOffChecked + "> Enable automatic on/off</label>\n";
+  page +=
+    "<label>"
+    "<input type=\"checkbox\" name=\"auto_onoff\" " +
+    autoOnOffChecked +
+    "> Enable automatic on/off"
+    "</label>\n";
 
-  page += String("<label>Auto-off start time:<input type=\"time\" name=\"off_time\" value=\"") + String(offBuf) + String("\"></label>\n");
+  page += String(
+    "<label>Auto-off start time:"
+    "<input type=\"time\" name=\"off_time\" value=\""
+  ) + String(offBuf) +
+    "\"></label>\n";
 
-  page += String("<label>Auto-on start time:<input type=\"time\" name=\"on_time\" value=\"") + String(onBuf) + String("\"></label>\n");
+  page += String(
+    "<label>Auto-on start time:"
+    "<input type=\"time\" name=\"on_time\" value=\""
+  ) + String(onBuf) +
+    "\"></label>\n";
 
-  page += String("<label>Wi-Fi connection attempts (0-10):<input type=\"number\" name=\"max_attempts\" value=\"") + String(settings.maxConnectionAttempts) + String("\" min=\"0\" max=\"10\"></label>\n");
+  page += String(
+    "<label>Wi-Fi connection attempts (0-10):"
+    "<input type=\"number\" name=\"max_attempts\" value=\""
+  ) + String(settings.maxConnectionAttempts) +
+    "\" min=\"0\" max=\"10\"></label>\n";
 
-  page += String("<label>Wait per attempt, s (0-100):<input type=\"number\" name=\"wait_per_attempt\" value=\"") + String(settings.waitPerAttempt) + String("\" min=\"0\" max=\"100\"></label>\n");
-  
+  page += String(
+    "<label>Wait per attempt, s (0-100):"
+    "<input type=\"number\" name=\"wait_per_attempt\" value=\""
+  ) + String(settings.waitPerAttempt) +
+    "\" min=\"0\" max=\"100\"></label>\n";
+
   page += R"rawliteral(
       <input type="submit" value="Save settings">
     </form>
+
+    <hr>
+
+    <form action="/forget" method="POST">
+      <input type="submit" value="Forget Wi-Fi and reboot">
+    </form>
+
+    <hr>
+  )rawliteral";
+
+  // Diagnostics
+  page += "<p><b>Uptime:</b> ";
+  page += String(uptimeSeconds / 3600UL);
+  page += " h ";
+  page += String((uptimeSeconds % 3600UL) / 60UL);
+  page += " min</p>";
+
+  page += "<p><b>Last reset reason:</b> ";
+  page += ESP.getResetReason();
+  page += "</p>";
+
+  page += "<p><b>IP address:</b> ";
+  page += WiFi.localIP().toString();
+  page += "</p>";
+
+  page += R"rawliteral(
   </body>
   </html>
   )rawliteral";
 
-  page += R"rawliteral(
-  <hr>
-  <form action="/forget" method="POST">
-    <input type="submit" value="Forget Wi-Fi and reboot">
-  </form>
-  )rawliteral";
+  server.sendHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+  server.sendHeader("Pragma", "no-cache");
+  server.sendHeader("Expires", "0");
 
   server.send(200, "text/html", page);
 }
