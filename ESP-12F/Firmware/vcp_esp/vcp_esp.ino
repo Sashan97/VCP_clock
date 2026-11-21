@@ -90,6 +90,8 @@ void loadSettings() {
   EEPROM.get(0, settings);
 
   if (settings.magic != SETTINGS_MAGIC) {
+    settings.magic = SETTINGS_MAGIC;
+    
     settings.utcOffsetInSeconds = DEFAULT_OFFSET * 3600;
     settings.autoOnOffEnabled = false;
     settings.dstEnabled = true;
